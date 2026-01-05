@@ -27,6 +27,7 @@ class StalkerPortal {
         this.client = axios.create({
             baseURL: this.portalUrl,
             timeout: 10000,
+            withCredentials: true, // Enable cookies for cross-origin
             headers: {
                 "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
                 "X-User-Agent": "Model: MAG250; Link: WiFi",
@@ -88,9 +89,9 @@ class StalkerPortal {
                 config.params.mac = this.mac;
                 config.params.stb_lang = 'en';
                 config.params.timezone = 'Europe/Paris';
-                if (this.token) {
-                    config.params.token = this.token;
-                }
+                // if (this.token) {
+                //    config.params.token = this.token; // REMOVED: Rely on cookies to avoid dual-token issues
+                // }
             }
 
             if (typeof document !== 'undefined') {

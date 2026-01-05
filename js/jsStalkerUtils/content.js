@@ -44,7 +44,7 @@ export async function getItvCategories(portal) {
                 });
             }
         }
-        categories.sort((a, b) => a.name.localeCompare(b.name));
+        // categories.sort((a, b) => a.name.localeCompare(b.name));
         console.debug(`Fetched IPTV categories: ${categories.length}`);
         return categories;
 
@@ -157,7 +157,7 @@ async function fetchAllPages(portal, categoryType, categoryId) {
             }
         }
 
-        finalList.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        // finalList.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         console.debug(`Fetched ${finalList.length} items in total for category ${categoryId}`);
         return finalList;
 
