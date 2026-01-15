@@ -13,12 +13,50 @@ const App = {
         currentChannel: null
     },
 
-    init() {
+    log(msg) {
+        console.log("[App Log] " + msg);
+    },
+
+    async init() {
         console.log("[App] Initializing...");
+
+        // Load Views Dynamically
+        await this.loadViews();
+
+        this.showLogin();
+
+        if (window.initNavigation) {
+            window.initNavigation();
+        }
+
         // Ensure buttons have bindings
         // (OnClick attributes in HTML handle this for Login)
         // Global access
         window.App = this;
+    },
+
+    async loadViews() {
+        const views = ['login', 'combos', 'groups', 'channels', 'player'];
+        const root = document.getElementById('app-root');
+
+        for (const view of views) {
+            try {
+                const response = await fetch(`views/${view}.html`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const html = await response.text();
+
+                const temp = document.createElement('div');
+                temp.innerHTML = html;
+
+                while (temp.firstChild) {
+                    root.appendChild(temp.firstChild);
+                }
+                console.log(`[App] Loaded view: ${view}`);
+            } catch (e) {
+                console.error(`[App] Failed to load view ${view}:`, e);
+                this.log(`Error loading ${view}: ${e.message}`);
+            }
+        }
     },
 
     async connect() {
@@ -33,13 +71,49 @@ const App = {
             console.log("[App] Handshake Success");
 
             await this.stalker.getProfile();
-            console.log("[App] Profile Fetched");
+            console.log("[App] Profile Fetched:", this.stalker.profile); // Inspect this!
 
             // Fetch Categories (Groups)
             // Using Utils directly since StalkerPortal.getAllChannels was test-only
             this.data.categories = await StalkerUtils.getCategories(this.stalker, "itv");
 
             this.showGroups();
+
+            this.showGroups();
+
+            // Use the already fetched profile data for expiration
+            if (this.stalker.profile && this.stalker.profile.expire_billing_date) {
+                const dateStr = this.stalker.profile.expire_billing_date;
+
+                if (dateStr === "0000-00-00 00:00:00") {
+                    document.getElementById('expiration-info').textContent = "Expiration: Unlimited";
+                } else {
+                    try {
+                        // dateStr is usually YYYY-MM-DD HH:MM:SS
+                        // Replace - with / to ensure cross-browser parsing if needed, though most support ISO-ish
+                        const date = new Date(dateStr.replace(/-/g, "/"));
+
+                        if (!isNaN(date.getTime())) {
+                            // Format: "January 27, 2026, 9:51 am"
+                            const options = {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: 'numeric',
+                                minute: 'numeric',
+                                hour12: true
+                            };
+                            const formatted = date.toLocaleDateString('en-US', options);
+                            document.getElementById('expiration-info').textContent = formatted;
+                        } else {
+                            document.getElementById('expiration-info').textContent = dateStr;
+                        }
+                    } catch (e) {
+                        console.warn("Date parse error", e);
+                        document.getElementById('expiration-info').textContent = dateStr;
+                    }
+                }
+            }
         } catch (e) {
             console.error("[App] Connection Failed:", e);
             alert("Connection Failed: " + e.message);
@@ -50,6 +124,18 @@ const App = {
         this.switchView('view-login');
         this.state = "LOGIN";
         player.stop();
+
+        // Focus Connect button initially as requested
+        setTimeout(() => {
+            const btn = document.getElementById('btn-connect');
+            if (btn) {
+                // Remove class from any auto-selected element (like initNavigation's default)
+                document.querySelectorAll('.focused').forEach(el => el.classList.remove('focused'));
+
+                btn.focus();
+                btn.classList.add('focused'); // Sync with navigation.js
+            }
+        }, 100);
     },
 
     showGroups() {
@@ -90,28 +176,92 @@ const App = {
         }
     },
 
+    inputLocked: false, // Prevent key bounce/double clicks
+
     async selectGroup(category) {
+        if (this.inputLocked) return;
         console.log(`[App] Selected Group: ${category.name}`);
         this.data.currentCategory = category;
+
+        // Lock input to prevent immediate selection of first channel (key bounce)
+        this.inputLocked = true;
+        setTimeout(() => { this.inputLocked = false; }, 1000); // 1s safety lock
+
+        // Reset focus state completely when entering a new group
+        this.data.pendingFocusId = null;
+        this.data.currentChannel = null; // Fix: Prevent legacy focus logic from finding old channel
+        sessionStorage.removeItem('lastFocusedChannelId');
+
+        // Reset pending focus from storage
+        const lastId = sessionStorage.getItem('lastFocusedChannelId');
+        if (lastId) {
+            console.log(`[App] Will try to restore focus to channel ID: ${lastId}`);
+            this.data.pendingFocusId = parseInt(lastId, 10);
+        } else {
+            this.data.pendingFocusId = null;
+        }
 
         // UX: Show loading?
         const container = document.getElementById('groups-list');
         container.innerHTML = '<div class="list-item">Loading...</div>';
 
         try {
-            this.data.channels = await StalkerUtils.getChannelsInCategory(this.stalker, category.category_id);
-            this.showChannels();
+            // Reset channels list
+            this.data.channels = [];
+
+            // Define incremental loader
+            const onProgress = (newChannels) => {
+                this.data.channels = this.data.channels.concat(newChannels);
+                this.appendChannels(newChannels);
+
+                // Remove "Loading..." specific item if it exists and we have data
+                const container = document.getElementById('channels-list');
+                const loadingEl = container.querySelector('.loading-item');
+                if (loadingEl) {
+                    loadingEl.remove();
+                }
+            };
+
+            this.showChannels(true); // Show view immediately in loading state
+
+            await StalkerUtils.getChannelsInCategory(this.stalker, category.category_id, onProgress);
+
+            // Final check if empty (and no progress was called or network failed silently)
+            if (this.data.channels.length === 0) {
+                const container = document.getElementById('channels-list');
+                container.innerHTML = '<div class="list-item">No Channels Found</div>';
+            } else {
+                // If we finished loading and still have a pending focus (item not found), fallback to first
+                if (this.data.pendingFocusId) {
+                    console.warn(`[App] Pending focus channel ${this.data.pendingFocusId} not found in list. Defaulting to first.`);
+                    this.data.pendingFocusId = null;
+                    const container = document.getElementById('channels-list');
+                    if (container.firstElementChild) {
+                        container.firstElementChild.focus();
+                        container.firstElementChild.classList.add('focused');
+                    }
+                }
+            }
+
         } catch (e) {
             console.error("Failed to load channels", e);
-            this.showGroups(); // Go back on fail
+            // Don't auto-back navigation on error, just alert or show error state in list
+            const container = document.getElementById('channels-list');
+            container.innerHTML = `<div class="list-item">Error loading channels</div>`;
         }
     },
 
-    showChannels() {
+    showChannels(isLoading = false) {
         this.switchView('view-channels');
         this.state = "CHANNELS";
 
         const container = document.getElementById('channels-list');
+
+        if (isLoading) {
+            container.innerHTML = '<div class="list-item loading-item">Loading Channels...</div>';
+            return;
+        }
+
         container.innerHTML = "";
 
         if (this.data.channels.length === 0) {
@@ -119,38 +269,107 @@ const App = {
             return;
         }
 
-        let foundFocus = false;
+        // Initial Render of everything only if not incremental (fallback)
+        // Check storage for focus (e.g. returning from player)
+        const lastId = sessionStorage.getItem('lastFocusedChannelId');
+        if (lastId) {
+            this.data.pendingFocusId = parseInt(lastId, 10);
+        }
 
-        this.data.channels.forEach((ch, index) => {
+        this.appendChannels(this.data.channels);
+    },
+
+    appendChannels(channels) {
+        const container = document.getElementById('channels-list');
+        let indexOffset = container.childElementCount; // Maintain focus logic index
+
+        // If it was just loading message, clear it
+        const loadingEl = container.querySelector('.loading-item');
+        if (loadingEl) loadingEl.remove();
+
+        channels.forEach((ch, i) => {
+            const index = indexOffset + i;
             const el = document.createElement('div');
             el.className = 'list-item focusable';
-            el.textContent = ch.name;
+
+            if (ch.logo) {
+                const img = document.createElement('img');
+                const baseUrl = this.stalker.portalUrl;
+                if (ch.logo.startsWith('http') || ch.logo.startsWith('//')) {
+                    img.src = ch.logo;
+                } else {
+                    img.src = `${baseUrl}/stalker_portal/${ch.logo}`;
+                }
+                img.className = 'channel-logo';
+                img.onerror = () => { img.style.display = 'none'; };
+                el.appendChild(img);
+            }
+
+            const span = document.createElement('span');
+            span.textContent = ch.name;
+            el.appendChild(span);
+
             el.onclick = () => this.selectChannel(ch);
+
+            // Auto-focus only if it's the very first item overall
             if (index === 0) setTimeout(() => el.focus(), 100);
+
             container.appendChild(el);
 
-            // Restore focus if this was the last selected channel
+            // Restore focus check (simplified)
             if (this.data.currentChannel && this.data.currentChannel.id === ch.id) {
                 setTimeout(() => {
                     el.focus();
                     el.classList.add('focused');
                     el.scrollIntoView({ block: 'center' });
                 }, 100);
-                foundFocus = true;
+            }
+            // Check pending focus
+            if (this.data.pendingFocusId && this.data.pendingFocusId === ch.id) {
+                console.log(`[App] Restoring focus to ${ch.name} (${ch.id})`);
+                setTimeout(() => {
+                    el.focus();
+                    el.classList.add('focused');
+                    el.scrollIntoView({ block: 'center' });
+                }, 100);
+                this.data.pendingFocusId = null; // Found it
             }
         });
 
-        if (!foundFocus && this.data.channels.length > 0) {
-            setTimeout(() => {
-                const first = container.firstElementChild;
-                if (first) { first.focus(); first.classList.add('focused'); }
-            }, 100);
+        // If we added items and nothing is focused, try to focus first item
+        // Check if focus is within container, if not, force focus to first element
+        // ONLY if we are NOT waiting for a specific focus item
+        if (this.state === "CHANNELS" && indexOffset <= 3 && container.firstElementChild && !this.data.pendingFocusId) {
+            const active = document.activeElement;
+            const isFocusInContainer = container.contains(active);
+
+            if (!isFocusInContainer) {
+                console.log("Auto-focusing first channel item (forced)...");
+                setTimeout(() => {
+                    // Re-check existence just in case
+                    if (container.firstElementChild) {
+                        container.firstElementChild.focus();
+                        container.firstElementChild.classList.add('focused'); // Visual feedback
+                    }
+                }, 100);
+            }
         }
     },
 
+
+
     async selectChannel(channel) {
+        if (this.inputLocked) {
+            console.log("[App] Input locked - ignoring selection");
+            return;
+        }
         console.log(`[App] Selected Channel: ${channel.name}`);
         this.data.currentChannel = channel;
+
+        // Save for focus restoration
+        if (channel.id) {
+            sessionStorage.setItem('lastFocusedChannelId', channel.id);
+        }
 
         try {
             const link = await this.stalker.createLink("itv", channel.cmd);
@@ -164,11 +383,59 @@ const App = {
         }
     },
 
+    nextChannel() {
+        if (!this.data.currentChannel || this.data.channels.length === 0) return;
+
+        const currentIndex = this.data.channels.findIndex(ch => ch.id === this.data.currentChannel.id);
+        let nextIndex = currentIndex + 1;
+
+        // Wrap around
+        if (nextIndex >= this.data.channels.length) {
+            nextIndex = 0;
+        }
+
+        console.log(`[App] Switching to Next Channel (Index: ${nextIndex})`);
+        this.selectChannel(this.data.channels[nextIndex]);
+    },
+
+    prevChannel() {
+        if (!this.data.currentChannel || this.data.channels.length === 0) return;
+
+        const currentIndex = this.data.channels.findIndex(ch => ch.id === this.data.currentChannel.id);
+        let prevIndex = currentIndex - 1;
+
+        // Wrap around
+        if (prevIndex < 0) {
+            prevIndex = this.data.channels.length - 1;
+        }
+
+        console.log(`[App] Switching to Prev Channel (Index: ${prevIndex})`);
+        this.selectChannel(this.data.channels[prevIndex]);
+    },
+
     showPlayer(channel, url) {
         this.switchView('view-player');
         this.state = "PLAYER";
 
         document.getElementById('player-title').textContent = channel.name;
+
+        const logoEl = document.getElementById('player-logo');
+        if (logoEl) {
+            if (channel.logo) {
+                const baseUrl = this.stalker.portalUrl;
+                if (channel.logo.startsWith('http') || channel.logo.startsWith('//')) {
+                    logoEl.src = channel.logo;
+                } else {
+                    logoEl.src = `${baseUrl}/stalker_portal/${channel.logo}`;
+                }
+                // Tailwind: remove 'hidden' class, ensure display style is cleared
+                logoEl.classList.remove('hidden');
+                logoEl.style.display = '';
+            } else {
+                logoEl.classList.add('hidden');
+                logoEl.style.display = 'none';
+            }
+        }
 
         // Tizen Requirement: Make background transparent to see video plane
         document.body.classList.add('transparent-bg');
@@ -180,20 +447,24 @@ const App = {
 
         // Show overlay initially, then hide after 3 seconds for clean view
         const overlay = document.getElementById('player-overlay');
+
+        // Reset overlay state
         overlay.style.opacity = '1';
+        overlay.style.transition = 'opacity 0.2s';
 
         if (this.overlayTimer) clearTimeout(this.overlayTimer);
         this.overlayTimer = setTimeout(() => {
             overlay.style.transition = 'opacity 1s';
             overlay.style.opacity = '0';
-        }, 3000);
+        }, 4000);
 
         const headers = this.stalker.getPlaybackHeaders();
         const bufferingEl = document.getElementById('buffering-overlay');
 
         // Define play options
         const playOptions = {
-            headers: headers,
+            // Headers disabled to match Python VLC behavior (URL contains token)
+            // headers: headers, 
             autoRestart: false, // We handle restart manually to refresh tokens
             onBufferingStart: () => {
                 bufferingEl.style.display = 'block';
@@ -208,6 +479,20 @@ const App = {
             onStreamCompleted: () => {
                 console.log("[App] Stream ended. Validating and restarting...");
                 this.restartStream(channel);
+            },
+            onError: (e) => {
+                console.error("[App] Playback Failed:", e);
+                // alert("Playback Failed: Stream is unplayable."); // Disabled per user request
+                this.player.stop(); // Ensure player is stopped
+                this.switchView('view-channels');
+                this.state = "CHANNELS";
+
+                // Restore layout visibility
+                document.body.classList.remove('transparent-bg');
+                document.getElementById('view-player').classList.remove('transparent-bg');
+                document.getElementById('logBox').style.display = 'block';
+                document.getElementById('main-title').style.display = 'block';
+                document.getElementById('buffering-overlay').style.display = 'none';
             }
         };
 
@@ -254,6 +539,7 @@ const App = {
                 this.showChannels();
                 break;
             case "CHANNELS":
+                sessionStorage.removeItem('lastFocusedChannelId'); // Clear saved focus
                 this.showGroups();
                 break;
             case "GROUPS":
@@ -283,11 +569,17 @@ const App = {
     combos: [],
     selectedComboId: null,
 
-    showCombos() {
+    async showCombos() {
         this.switchView('view-combos');
         this.state = "COMBOS";
-        this.loadCombos();
+
+        // Show loading state if needed, or just clear list
+        const container = document.getElementById('combos-list');
+        container.innerHTML = '<div class="list-item">Loading...</div>';
+
+        await this.loadCombos();
         this.renderCombos();
+
         // Clear inputs
         document.getElementById('comboName').value = "";
         document.getElementById('comboUrl').value = "";
@@ -295,23 +587,20 @@ const App = {
         this.selectedComboId = null;
     },
 
-    loadCombos() {
-        const stored = localStorage.getItem('mac_iptv_combos');
-        if (stored) {
-            try {
-                this.combos = JSON.parse(stored);
-            } catch (e) {
-                console.error("Failed to parse combos", e);
-                this.combos = [];
-            }
-        } else {
+    async loadCombos() {
+        // Migrate old data first if exists
+        await DB.migrateFromLocalStorage();
+        try {
+            this.combos = await DB.getAll();
+        } catch (e) {
+            console.error("Failed to load combos from DB", e);
             this.combos = [];
         }
     },
 
-    saveCombosToStorage() {
-        localStorage.setItem('mac_iptv_combos', JSON.stringify(this.combos));
-    },
+    // saveCombosToStorage is no longer needed as we use direct DB ops
+    // kept for reference or bulk refactor:
+    // saveCombosToStorage() { ... }
 
     renderCombos() {
         const container = document.getElementById('combos-list');
@@ -340,72 +629,57 @@ const App = {
         this.selectedComboId = combo.id;
     },
 
-    saveCombo() {
+    async saveCombo() {
         const name = document.getElementById('comboName').value.trim();
         const url = document.getElementById('comboUrl').value.trim();
         const mac = document.getElementById('comboMac').value.trim();
 
-        if (!url || !mac) {
-            alert("Please enter URL and MAC");
-            return;
-        }
+        if (name && url && mac) {
+            const newCombo = { name, url, mac };
+            try {
+                if (this.selectedComboId) {
+                    newCombo.id = this.selectedComboId;
+                    await DB.put(newCombo);
+                } else {
+                    await DB.add(newCombo);
+                }
 
-        const newCombo = {
-            id: Date.now(), // Simple ID
-            name: name || "Unnamed",
-            url: url,
-            mac: mac
-        };
+                this.combos = await DB.getAll();
+                this.renderCombos();
 
-        this.combos.push(newCombo);
-        this.saveCombosToStorage();
-        this.renderCombos();
-        alert("Combo Saved!");
-    },
-
-    updateCombo() {
-        if (!this.selectedComboId) {
-            alert("No combo selected to update");
-            return;
-        }
-
-        const name = document.getElementById('comboName').value.trim();
-        const url = document.getElementById('comboUrl').value.trim();
-        const mac = document.getElementById('comboMac').value.trim();
-
-        if (!url || !mac) {
-            alert("Please enter URL and MAC");
-            return;
-        }
-
-        const index = this.combos.findIndex(c => c.id === this.selectedComboId);
-        if (index !== -1) {
-            this.combos[index].name = name || "Unnamed";
-            this.combos[index].url = url;
-            this.combos[index].mac = mac;
-            this.saveCombosToStorage();
-            this.renderCombos();
-            alert("Combo Updated!");
+                this.selectedComboId = null;
+                document.getElementById('comboName').value = "";
+                document.getElementById('comboUrl').value = "";
+                document.getElementById('comboMac').value = "";
+                alert("Combo Saved");
+            } catch (e) {
+                console.error("Error saving combo:", e);
+                alert("Failed to save combo");
+            }
+        } else {
+            alert("Please fill all fields");
         }
     },
 
-    deleteCombo() {
-        if (!this.selectedComboId) {
+    // updateCombo merged into saveCombo
+
+    async deleteCombo() {
+        if (this.selectedComboId) {
+            try {
+                await DB.delete(this.selectedComboId);
+                this.combos = await DB.getAll();
+                this.renderCombos();
+
+                this.selectedComboId = null;
+                document.getElementById('comboName').value = "";
+                document.getElementById('comboUrl').value = "";
+                document.getElementById('comboMac').value = "";
+            } catch (e) {
+                console.error("Error deleting combo:", e);
+                alert("Failed to delete combo");
+            }
+        } else {
             alert("No combo selected to delete");
-            return;
-        }
-
-        const index = this.combos.findIndex(c => c.id === this.selectedComboId);
-        if (index !== -1) {
-            this.combos.splice(index, 1);
-            this.saveCombosToStorage();
-            this.renderCombos();
-
-            // Clear inputs
-            document.getElementById('comboName').value = "";
-            document.getElementById('comboUrl').value = "";
-            document.getElementById('comboMac').value = "";
-            this.selectedComboId = null;
         }
     },
 

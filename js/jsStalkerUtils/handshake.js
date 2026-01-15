@@ -21,7 +21,8 @@ export function generatePrehash(token) {
     return prehash;
 }
 
-export async function performHandshake(portal) {
+// Helper to scan a set of Base URLs
+async function scanForHandshake(portal, baseUrls) {
     const apiSuffixes = [
         "/stalker_portal/server/load.php",
         "/server/load.php",
@@ -31,38 +32,10 @@ export async function performHandshake(portal) {
         "/c/stalker_portal/server/load.php"
     ];
 
-    const baseUrls = [];
-    let originalBase = portal.portalUrl.replace(/\/$/, "");
-    baseUrls.push(originalBase);
-
-    if (originalBase.endsWith('/c')) {
-        baseUrls.push(originalBase.slice(0, -2));
-    }
-
-    if (originalBase.endsWith('/stalker_portal/c')) {
-        baseUrls.push(originalBase.slice(0, -17));
-    }
-
-    try {
-        const parsed = new URL(originalBase);
-        const rootUrl = `${parsed.protocol}//${parsed.host}`;
-        if (!baseUrls.includes(rootUrl)) {
-            baseUrls.push(rootUrl);
-        }
-    } catch (e) {
-        console.warn("Invalid portal URL:", originalBase);
-    }
-
     const testedUrls = new Set();
-    let workingUrl = null;
-    let finalJsData = null;
 
     for (const base of baseUrls) {
-        if (workingUrl) break;
-
         for (const suffix of apiSuffixes) {
-            if (workingUrl) break;
-
             let fullUrl;
             if (base.endsWith('/') && suffix.startsWith('/')) {
                 fullUrl = base + suffix.substring(1);
@@ -91,10 +64,7 @@ export async function performHandshake(portal) {
                     const jsData = response.data && response.data.js ? response.data.js : null;
 
                     if (jsData && jsData.token) {
-                        workingUrl = fullUrl;
-                        finalJsData = jsData;
-                        console.info(`Handshake successful on URL: ${fullUrl}`);
-                        break;
+                        return { url: fullUrl, data: jsData };
                     }
 
                     // Fallback Logic
@@ -102,8 +72,7 @@ export async function performHandshake(portal) {
 
                     const token = generateToken();
                     const prehash = generatePrehash(token);
-
-                    portal.token = token;
+                    portal.token = token; // temporary set for retry
 
                     const retryParams = {
                         type: "stb",
@@ -115,39 +84,69 @@ export async function performHandshake(portal) {
 
                     const retryResp = await portal.client.get(fullUrl, { params: retryParams });
                     if (retryResp.status === 200 && retryResp.data && retryResp.data.js && retryResp.data.js.token) {
-                        workingUrl = fullUrl;
-                        finalJsData = retryResp.data.js;
-                        console.info(`Handshake fallback successful on URL: ${fullUrl}`);
-                        break;
+                        return { url: fullUrl, data: retryResp.data.js };
                     }
                 }
             } catch (error) {
-                // Python logs error and continues
                 console.warn(`Handshake request failed for ${fullUrl}:`, error.message);
             }
         }
     }
+    return null;
+}
 
-    if (!workingUrl || !finalJsData) {
-        console.error(`Failed to perform handshake. Scanned ${testedUrls.size} URLs.`);
+function generateBaseUrls(portalUrl) {
+    const baseUrls = [];
+    let originalBase = portalUrl.replace(/\/$/, "");
+    baseUrls.push(originalBase);
+
+    if (originalBase.endsWith('/c')) {
+        baseUrls.push(originalBase.slice(0, -2));
+    }
+
+    if (originalBase.endsWith('/stalker_portal/c')) {
+        baseUrls.push(originalBase.slice(0, -17));
+    }
+
+    try {
+        const parsed = new URL(originalBase);
+        const rootUrl = parsed.origin;
+        if (!baseUrls.includes(rootUrl)) {
+            baseUrls.push(rootUrl);
+        }
+    } catch (e) {
+        console.warn("Invalid portal URL:", originalBase);
+    }
+    return baseUrls;
+}
+
+export async function performHandshake(portal) {
+    let result = await scanForHandshake(portal, generateBaseUrls(portal.portalUrl));
+
+    // If failed and trying HTTPS, try HTTP fallback
+    if (!result && portal.portalUrl.toLowerCase().startsWith("https://")) {
+        console.warn("HTTPS handshake failed. Attempting HTTP fallback...");
+        const httpUrl = portal.portalUrl.replace(/^https:\/\//i, "http://");
+        result = await scanForHandshake(portal, generateBaseUrls(httpUrl));
+    }
+
+    if (!result) {
         throw new Error("Failed to perform handshake on any known path.");
     }
 
+    // Success Handling
+    const { url, data } = result;
+
     // Upsert portal state
-    if (workingUrl) {
-        portal.activeApiPath = workingUrl;
-        portal.apiUrl = workingUrl;
-        console.info(`Updated API Endpoint URL to: ${workingUrl}`);
-    }
+    portal.activeApiPath = url;
+    portal.apiUrl = url;
+    console.info(`Updated API Endpoint URL to: ${url}`);
 
-    portal.token = finalJsData.token;
+    portal.token = data.token;
 
-    if (finalJsData.random) {
-        portal.random = finalJsData.random.toLowerCase();
+    if (data.random) {
+        portal.random = data.random.toLowerCase();
     } else {
-        // Fallback random generation
-        // Python: portal.generate_random_value()
-        // Assuming portal has this or we use local
         const generateRandom = () => {
             const chars = '0123456789abcdef';
             let result = '';

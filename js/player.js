@@ -1,4 +1,4 @@
- const player = {
+const player = {
     avplay: null,
 
     init() {
@@ -68,7 +68,10 @@
                     }
                 },
                 oncurrentplaytime: (time) => { },
-                onerror: (e) => console.error("AVPlay Error", e)
+                onerror: (e) => {
+                    console.error("AVPlay Error", e);
+                    if (options.onError) options.onError(e);
+                }
             });
 
             console.log("AVPlay: prepareAsync");
@@ -77,6 +80,7 @@
                 this.avplay.play();
             }, (e) => {
                 console.error("AVPlay Prepare Error", e);
+                if (options.onError) options.onError(e);
             });
 
         } catch (e) {

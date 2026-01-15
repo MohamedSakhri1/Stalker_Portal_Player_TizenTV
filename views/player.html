@@ -1,0 +1,22 @@
+<div id="view-player" class="view relative w-full h-full bg-black">
+    <div id="player-container" class="absolute inset-0 z-0"></div>
+
+    <!-- Player Info Overlay: Bottom Left -->
+    <!-- Player Info Overlay: Bottom Left -->
+    <div id="player-overlay"
+        class="fixed bottom-20 left-20 flex items-center gap-[4rem] bg-black/60 p-8 rounded-2xl transition-opacity duration-500 z-50 pointer-events-none border border-white/10 backdrop-blur-sm">
+        <img id="player-logo" src="" alt="" class="h-[10rem] w-auto object-contain hidden" style="display:none;">
+        <div id="player-info" class="flex flex-col">
+            <h3 id="player-title" class="text-6xl font-bold text-white drop-shadow-lg mb-2">Channel Name</h3>
+            <p class="text-3xl text-gray-300 font-medium">Press BACK to return</p>
+        </div>
+    </div>
+
+    <!-- Buffering Overlay: Bottom Right -->
+    <!-- Buffering Overlay: Bottom Right -->
+    <div id="buffering-overlay"
+        class="fixed bottom-20 right-20 bg-black/80 text-white text-4xl font-semibold px-10 py-6 rounded-xl z-50 border border-white/20 backdrop-blur-md"
+        style="display:none;">
+        Buffering 0%
+    </div>
+</div>

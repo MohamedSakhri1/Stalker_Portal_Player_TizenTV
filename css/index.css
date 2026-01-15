@@ -1,0 +1,122 @@
+body {
+    background-color: #111;
+    color: #fff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+    padding-top: 50px;
+    margin: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    font-size: 30px;
+}
+
+/* Safe area for standard views but NOT player */
+.view:not(#view-player) {
+    height: 100%;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+h1 {
+    font-size: 48px;
+    margin-bottom: 40px;
+}
+
+h2 {
+    font-size: 36px;
+    margin-bottom: 20px;
+}
+
+body.transparent-bg,
+.view.transparent-bg {
+    background-color: transparent !important;
+}
+
+.log-box {
+    background: #222;
+    padding: 10px;
+    height: 55px;
+    /* Reduced height to save space */
+    overflow-y: scroll;
+    border: 1px solid #444;
+    margin-top: 20px;
+    font-family: monospace;
+    font-size: 20px;
+}
+
+button {
+    padding: 15px 30px;
+    font-size: 30px;
+    margin-right: 15px;
+    border: 3px solid transparent;
+    border-radius: 8px;
+    background: #333;
+    color: white;
+}
+
+input {
+    padding: 15px;
+    font-size: 30px;
+    width: 500px;
+    border: 3px solid transparent;
+    border-radius: 8px;
+    background: #222;
+    color: white;
+}
+
+.focused {
+    border: 3px solid #00aaff !important;
+    background-color: #444;
+    transform: scale(1.05);
+    box-shadow: 0 0 15px rgba(0, 170, 255, 0.5);
+}
+
+/* View Switching */
+.view {
+    display: none;
+}
+
+.view.active {
+    display: block;
+    z-index: 1;
+}
+
+/* Lists */
+.list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 680px;
+    overflow-y: auto;
+    padding-inline: 20px;
+}
+
+.list-item {
+    padding: 20px;
+    font-size: 32px;
+    background: #333;
+    border: 3px solid transparent;
+    cursor: pointer;
+    border-radius: 8px;
+    display: flex !important;
+    align-items: center;
+    gap: 15px;
+}
+
+.channel-logo {
+    width: 50px;
+    height: 50px;
+    object-fit: contain;
+    background-color: transparent;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.list-item.focused {
+    background: #555;
+    border-color: #00aaff;
+    transform: scale(1.02);
+}
+
+/* Player Overlay - Moved to Tailwind in player.html */

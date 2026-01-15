@@ -1,53 +1,84 @@
 #!/bin/bash
 
 # Configuration
-APP_ID="abmB45mGZB.MacIPTVTest"
+# Tizen Studio Paths - explicit to avoid path issues
+TIZEN_CMD="C:/tizen-studio/tools/ide/bin/tizen.bat"
+SDB_CMD="C:/tizen-studio/tools/sdb.exe"
+
+APP_ID="abmB45mGZB.MacPlayer"
 PKG_ID="abmB45mGZB"
-WGT_NAME="MacIPTVTest.wgt"
+WGT_NAME="MacPlayer.wgt"
 PROJECT_PATH="."
 CERT_PROFILE="GalaxyTV_2025" # Change this to your certificate profile name
-TARGET_IP="192.168.3.17" # Change this or pass as argument
-TARGET_DEVICE="UE55NU7100" # Typically sdb connects to one dev, but useful if multiple
 
-# Use first argument as IP if provided
-if [ ! -z "$1" ]; then
-    TARGET_IP=$1
+# Setup Target
+TARGET_DEVICE=""
+USER_IP="$1"
+
+echo "--- Checking for connected devices ---"
+# Get list of devices (lines containing 'device')
+# Format: "ID       device     Model"
+TARGET_DEVICE=$("$SDB_CMD" devices | grep -P "\tdevice" | awk '{print $3}' | head -n 1)
+
+if [ -z "$TARGET_DEVICE" ]; then
+    if [ ! -z "$USER_IP" ]; then
+        echo "No devices connected. Attempting to connect to $USER_IP..."
+        "$SDB_CMD" connect "$USER_IP"
+        sleep 2
+        # Try again
+        TARGET_DEVICE=$("$SDB_CMD" devices | grep -P "\tdevice" | awk '{print $3}' | head -n 1)
+    fi
 fi
 
+if [ -z "$TARGET_DEVICE" ]; then
+    echo "Error: No connected Tizen devices found."
+    echo "Usage: ./deploy.sh [IP_ADDRESS]"
+    echo "   Or ensure your TV is connected via 'sdb connect <IP>'"
+    exit 1
+fi
+
+echo "Target Device Found: $TARGET_DEVICE"
+
 echo "--- Cleaning ---"
-rm -rf .build
-rm -f $WGT_NAME
+rm -rf .buildResult
 
 echo "--- Building Web App ---"
-tizen build-web -- "$PROJECT_PATH"
+# Build the project
+"$TIZEN_CMD" build-web -- "$PROJECT_PATH"
 if [ $? -ne 0 ]; then
     echo "Build failed!"
     exit 1
 fi
 
 echo "--- Packaging ---"
-# Assuming 'tizen' is in path. 'tizen package' creates the wgt
-# -t wgt: type widget
-# -s $CERT_PROFILE: security profile for signing
-# -- .buildResult: input directory (default output of build-web)
-tizen package -t wgt -s "$CERT_PROFILE" -- .buildResult
+# Package into .buildResult directory
+"$TIZEN_CMD" package -t wgt -s "$CERT_PROFILE" -- .buildResult
 if [ $? -ne 0 ]; then
     echo "Packaging failed! Check if certificate profile '$CERT_PROFILE' exists."
     exit 1
 fi
 
-# Move the created wgt to root (tizen package outputs to current dir usually)
-mv .buildResult/*.wgt $WGT_NAME
+echo "--- Detecting Package ---"
+# Find the generated .wgt file
+WGT_FILE=$(ls .buildResult/*.wgt | head -n 1)
+WGT_NAME=$(basename "$WGT_FILE")
 
-echo "--- Connecting to Device ($TARGET_IP) ---"
-sdb connect $TARGET_IP
+if [ -z "$WGT_NAME" ]; then
+    echo "Error: No .wgt file found in .buildResult"
+    exit 1
+fi
+echo "Package found: $WGT_NAME"
 
-echo "--- Installing ---"
-tizen install -n $WGT_NAME -t "$TARGET_DEVICE" -- .
-# Simple install command if target is connected might just be:
-# tizen install -n $WGT_NAME -t $(sdb devices | grep device | awk '{print $1}')
+echo "--- Installing on $TARGET_DEVICE ---"
+# Install directly from the output directory
+"$TIZEN_CMD" install -n "$WGT_NAME" -t "$TARGET_DEVICE" -- .buildResult
 
-echo "--- Running ---"
-tizen run -p $APP_ID -t "$TARGET_DEVICE"
+if [ $? -eq 0 ]; then
+    echo "--- Running ---"
+    "$TIZEN_CMD" run -p "$APP_ID" -t "$TARGET_DEVICE"
+else
+    echo "Installation failed."
+    exit 1
+fi
 
 echo "Done."

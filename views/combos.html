@@ -1,0 +1,36 @@
+<div id="view-combos" class="view">
+    <h2>Combos Manager</h2>
+    <div style="display: flex; gap: 20px;">
+        <div id="combos-list" class="list-container" style="flex: 1; border-right: 1px solid #444;">
+            <!-- List items will go here -->
+        </div>
+        <div style="flex: 1; padding: 20px;">
+            <div>
+                <label>Name:</label><br>
+                <input type="text" id="comboName" class="focusable" placeholder="My Server">
+            </div>
+            <br>
+            <div>
+                <label>URL:</label><br>
+                <input type="text" id="comboUrl" class="focusable" placeholder="http://example.com/c">
+            </div>
+            <br>
+            <div>
+                <label>MAC:</label><br>
+                <input type="text" id="comboMac" class="focusable" placeholder="00:1A:79:00:00:00">
+            </div>
+            <br>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button onclick="App.saveCombo()" class="focusable bg-green-700">Save New</button>
+                <button onclick="App.updateCombo()" class="focusable bg-orange-700">Update Selected</button>
+                <button onclick="App.deleteCombo()" class="focusable bg-red-700">Delete</button>
+                <button onclick="App.selectComboAction()" class="focusable bg-blue-700">Select &
+                    Go</button>
+            </div>
+            <p style="font-size: 20px; color: #888; margin-top: 20px;">
+                Select a combo from the list to populate fields.<br>
+                Press BACK to return to Login.
+            </p>
+        </div>
+    </div>
+</div>

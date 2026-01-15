@@ -5,8 +5,18 @@
     <meta name="viewport" content="width=1920, user-scalable=no">
     <title>Stalker Tizen Test</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/index.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            corePlugins: {
+                preflight: false,
+            }
+        }
+    </script>
     <script src="js/jquery.min.js"></script>
-    <script src="js/crypto-js.min.js"></script>
+    <!-- <script src="js/crypto-js.min.js"></script> -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.9-1/crypto-js.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script type="module" src="js/StalkerPortal.js"></script>
     <script>
@@ -15,225 +25,24 @@
             window.CryptoJS = exports.CryptoJS;
         }
     </script>
-    <script src="js/player.js"></script>
     <script src="js/navigation.js"></script>
-    <style>
-        body {
-            background-color: #111;
-            color: #fff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            padding: 50px;
-            font-size: 30px;
-            /* Increased Base Font */
-        }
+    <script src="js/db.js"></script>
+    <script src="js/player.js"></script>
 
-        h1 {
-            font-size: 48px;
-            margin-bottom: 40px;
-        }
-
-        h2 {
-            font-size: 36px;
-            margin-bottom: 20px;
-        }
-
-        body.transparent-bg,
-        .view.transparent-bg {
-            background-color: transparent !important;
-        }
-
-        .log-box {
-            background: #222;
-            padding: 10px;
-            height: 200px;
-            /* Reduced height to save space */
-            overflow-y: scroll;
-            border: 1px solid #444;
-            margin-top: 20px;
-            font-family: monospace;
-            font-size: 20px;
-        }
-
-        button {
-            padding: 15px 30px;
-            font-size: 30px;
-            margin-right: 15px;
-            border: 3px solid transparent;
-            border-radius: 8px;
-            background: #333;
-            color: white;
-        }
-
-        input {
-            padding: 15px;
-            font-size: 30px;
-            width: 500px;
-            border: 3px solid transparent;
-            border-radius: 8px;
-            background: #222;
-            color: white;
-        }
-
-        .focused {
-            border: 3px solid #00aaff !important;
-            background-color: #444;
-            transform: scale(1.02);
-            box-shadow: 0 0 15px rgba(0, 170, 255, 0.5);
-        }
-
-        /* View Switching */
-        .view {
-            display: none;
-        }
-
-        .view.active {
-            display: block;
-            z-index: 1;
-        }
-
-        /* Lists */
-        .list-container {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            max-height: 600px;
-            overflow-y: auto;
-            padding-inline: 50px;
-        }
-
-        .list-item {
-            padding: 20px;
-            font-size: 32px;
-            background: #333;
-            border: 3px solid transparent;
-            cursor: pointer;
-            border-radius: 8px;
-        }
-
-        .list-item.focused {
-            background: #555;
-            border-color: #00aaff;
-        }
-
-        /* Player Overlay */
-        #player-overlay {
-            position: absolute;
-            bottom: 60px;
-            left: 60px;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 30px;
-            border-radius: 15px;
-            pointer-events: none;
-            /* Let clicks pass through */
-        }
-
-        #player-title {
-            font-size: 48px;
-            margin: 0 0 10px 0;
-        }
-
-        #player-overlay p {
-            font-size: 28px;
-            margin: 0;
-            color: #ccc;
-        }
-
-        #buffering-overlay {
-            position: absolute;
-            bottom: 60px;
-            right: 60px;
-            background: rgba(0, 0, 0, 0.6);
-            color: #ffffff;
-            padding: 20px 40px;
-            font-size: 36px;
-            border-radius: 15px;
-            display: none;
-            z-index: 10;
-        }
-    </style>
 </head>
 
 <body>
-    <h1 id="main-title">Stalker Portal V1 / By Mohamed Sakhri</h1>
-
-    <!-- VIEW: LOGIN -->
-    <div id="view-login" class="view active">
-        <div>
-            <label>Portal URL:</label>
-            <input type="text" id="portalUrl" class="focusable" value="http://backup.xp1.tv/c">
-        </div>
-        <br>
-        <div>
-            <label>MAC Address:</label>
-            <input type="text" id="macAddr" class="focusable" value="00:1A:79:CB:5E:CA">
-        </div>
-        <br>
-        <br>
-        <button onclick="App.connect()" class="focusable">Connect</button>
-        <button onclick="App.showCombos()" class="focusable">Manage Combos</button>
+    <div class="flex flex-row justify-between items-center mt-10 mx-10">
+        <h1 id="main-title" class="text-5xl font-bold">Stalker Portal V1.0</h1>
+        <div id="expiration-info" class="text-2xl font-semibold text-gray-400"></div>
     </div>
 
-    <!-- VIEW: COMBOS -->
-    <div id="view-combos" class="view">
-        <h2>Manage Combos</h2>
-        <div style="display: flex; gap: 20px;">
-            <div id="combos-list" class="list-container" style="flex: 1; border-right: 1px solid #444;">
-                <!-- List items will go here -->
-            </div>
-            <div style="flex: 1; padding: 20px;">
-                <div>
-                    <label>Name:</label><br>
-                    <input type="text" id="comboName" class="focusable" placeholder="My Server">
-                </div>
-                <br>
-                <div>
-                    <label>URL:</label><br>
-                    <input type="text" id="comboUrl" class="focusable" placeholder="http://example.com/c">
-                </div>
-                <br>
-                <div>
-                    <label>MAC:</label><br>
-                    <input type="text" id="comboMac" class="focusable" placeholder="00:1A:79:00:00:00">
-                </div>
-                <br>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button onclick="App.saveCombo()" class="focusable">Save New</button>
-                    <button onclick="App.updateCombo()" class="focusable">Update Selected</button>
-                    <button onclick="App.deleteCombo()" class="focusable" style="background: #a00;">Delete</button>
-                    <button onclick="App.selectComboAction()" class="focusable" style="background: #00aaff;">Select &
-                        Go</button>
-                </div>
-                <p style="font-size: 20px; color: #888; margin-top: 20px;">
-                    Select a combo from the list to populate fields.<br>
-                    Press BACK to return to Login.
-                </p>
-            </div>
-        </div>
+    <div id="app-root" class="mt-10 mb-10 mx-10 p-2">
     </div>
 
-    <!-- VIEW: GROUPS -->
-    <div id="view-groups" class="view">
-        <h2>Groups</h2>
-        <div id="groups-list" class="list-container"></div>
-    </div>
+    <div class="log-box" id="logBox">
 
-    <!-- VIEW: CHANNELS -->
-    <div id="view-channels" class="view">
-        <h2>Channels</h2>
-        <div id="channels-list" class="list-container"></div>
     </div>
-
-    <!-- VIEW: PLAYER -->
-    <div id="view-player" class="view">
-        <div id="player-container"></div>
-        <div id="player-overlay">
-            <h3 id="player-title">Channel Name</h3>
-            <p>Press BACK to return</p>
-        </div>
-        <div id="buffering-overlay">Buffering 0%</div>
-    </div>
-
-    <div class="log-box" id="logBox"></div>
 
     <script type="module" src="js/app.js"></script>
     <script>

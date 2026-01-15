@@ -18,6 +18,12 @@ export async function getItvCategories(portal) {
         JsHttpRequest: "1-xml"
     };
 
+    // Python script does NOT send sn/device_id for get_genres. 
+    // It also does NOT send token in params (uses headers).
+    // if (portal.token) {
+    //    params.token = portal.token;
+    // }
+
     try {
         const response = await portal.client.get(url, { params: params });
 
@@ -54,11 +60,11 @@ export async function getItvCategories(portal) {
     }
 }
 
-export async function getChannelsInCategory(portal, categoryId) {
-    return fetchAllPages(portal, "IPTV", categoryId);
+export async function getChannelsInCategory(portal, categoryId, onProgress) {
+    return fetchAllPages(portal, "IPTV", categoryId, onProgress);
 }
 
-async function fetchAllPages(portal, categoryType, categoryId) {
+async function fetchAllPages(portal, categoryType, categoryId, onProgress) {
     // Only handling IPTV
     if (categoryType !== "IPTV") return [];
 
@@ -106,25 +112,29 @@ async function fetchAllPages(portal, categoryType, categoryId) {
         console.debug(`Total items: ${totalItems}, Items per page: ${itemsPerPage}, Total pages: ${totalPages}`);
 
         // Logic for fetching pages. JS is async.
-        // We can use Promise.all for parallelism like ThreadPoolExecutor
+        // Refactored to Sequential execution to prevent ERR_CONNECTION_RESET
+        // and support onProgress loading.
 
-        const pagePromises = [];
-        // Loop from 1 to totalPages. We already have page 1 data, but to keep logic simple we can refetch or skip.
-        // Optimization: Use page 1 data we just got.
-
-        const processData = (pageData) => {
+        const processAndYield = (pageData) => {
+            const newItems = [];
             for (const item of pageData) {
                 item.item_type = itemType;
                 item.channel_id = item.id || item.channel_id; // Python logic
-                // TV doesn't use is_series filter
+                newItems.push(item);
                 items.push(item);
+            }
+            if (onProgress && newItems.length > 0) {
+                onProgress(newItems);
             }
         };
 
-        processData(data); // Process Page 1
+        processAndYield(data); // Process Page 1
 
-        // Fetch remaining pages
+        // Fetch remaining pages sequentially with delay
         for (let p = 2; p <= totalPages; p++) {
+            // Delay 500ms between requests to be nice to server
+            await new Promise(r => setTimeout(r, 500));
+
             const params = {
                 "type": typeParam,
                 "action": "get_ordered_list",
@@ -132,19 +142,20 @@ async function fetchAllPages(portal, categoryType, categoryId) {
                 "JsHttpRequest": "1-xml",
                 "p": p
             };
-            pagePromises.push(portal.client.get(url, { params: params }).then(resp => ({ p, resp })).catch(e => ({ p, error: e })));
-        }
 
-        const results = await Promise.all(pagePromises);
-
-        for (const res of results) {
-            if (res.error) {
-                console.warn(`Failed to fetch page ${res.p}:`, res.error);
-                continue;
+            try {
+                // console.debug(`Fetching page ${p}...`);
+                const resp = await portal.client.get(url, { params: params });
+                const pData = resp.data && resp.data.js && resp.data.js.data ? resp.data.js.data : [];
+                processAndYield(pData);
+            } catch (e) {
+                console.warn(`Failed to fetch page ${p}:`, e);
             }
-            const pData = res.resp.data && res.resp.data.js && res.resp.data.js.data ? res.resp.data.js.data : [];
-            processData(pData);
         }
+
+        // const results = await Promise.all(pagePromises); // OLD PARALLEL LOGIC REMOVED
+
+
 
         // Remove duplicates
         const unique = {};
