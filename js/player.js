@@ -43,6 +43,7 @@ const player = {
 
             // Required for some streams
             this.avplay.setDisplayRect(0, 0, 1920, 1080);
+            this.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
 
             this.avplay.setListener({
                 onbufferingstart: () => {
@@ -90,8 +91,53 @@ const player = {
 
     stop() {
         if (this.avplay) {
-            this.avplay.stop();
-            this.avplay.close();
+            try {
+                this.avplay.stop();
+                this.avplay.close();
+            } catch (e) { }
+        }
+    },
+
+    pause() {
+        if (this.avplay) {
+            try { this.avplay.pause(); } catch (e) { console.error("Pause fail", e); }
+        } else {
+            console.log("Mock Pause");
+        }
+    },
+
+    resume() {
+        if (this.avplay) {
+            try { this.avplay.play(); } catch (e) { console.error("Resume fail", e); }
+        } else {
+            console.log("Mock Resume");
+        }
+    },
+
+    jumpForward(ms) {
+        if (this.avplay) {
+            try {
+                const current = this.avplay.getCurrentTime();
+                this.avplay.seekTo(current + ms);
+            } catch (e) {
+                console.error("FF fail", e);
+            }
+        } else {
+            console.log(`Mock FF ${ms}ms`);
+        }
+    },
+
+    jumpBackward(ms) {
+        if (this.avplay) {
+            try {
+                const current = this.avplay.getCurrentTime();
+                const target = Math.max(0, current - ms);
+                this.avplay.seekTo(target);
+            } catch (e) {
+                console.error("RW fail", e);
+            }
+        } else {
+            console.log(`Mock RW ${ms}ms`);
         }
     }
 };

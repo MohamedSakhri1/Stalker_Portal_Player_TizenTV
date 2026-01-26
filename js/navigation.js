@@ -10,11 +10,11 @@ const KEY = {
     EXIT: 10182,
     PLAY: 415,
     PAUSE: 19,
-    PLAY: 415,
-    PAUSE: 19,
     STOP: 413,
     CH_UP: 427,
-    CH_DOWN: 428
+    CH_DOWN: 428,
+    FF: 417,
+    RW: 412
 };
 
 // Map standard browser keys if debugging on PC
@@ -34,6 +34,19 @@ window.initNavigation = function () {
 };
 
 $(document).ready(function () {
+    if (typeof tizen !== 'undefined' && tizen.tvinputdevice) {
+        try {
+            const keys = [
+                'MediaPlay', 'MediaPause', 'MediaStop', 'MediaFastForward', 'MediaRewind',
+                'ChannelUp', 'ChannelDown', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+            ];
+            // Batch register
+            tizen.tvinputdevice.registerKeyBatch(keys);
+            console.log("[Navigation] Tizen keys registered:", keys.join(', '));
+        } catch (e) {
+            console.error("[Navigation] Failed to register Tizen keys:", e);
+        }
+    }
     // Only bind keys once
     bindKeys();
 });
@@ -106,17 +119,39 @@ function bindKeys() {
                 }
                 break;
             case KEY.CH_UP:
-                if (window.App && window.App.state === "PLAYER") {
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
                     window.App.nextChannel();
                 }
                 break;
             case KEY.CH_DOWN:
-                if (window.App && window.App.state === "PLAYER") {
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
                     window.App.prevChannel();
                 }
                 break;
             case KEY.PLAY:
-                console.log("Play key pressed");
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
+                    player.resume();
+                }
+                break;
+            case KEY.PAUSE:
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
+                    player.pause();
+                }
+                break;
+            case KEY.STOP:
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
+                    window.App.handleBack();
+                }
+                break;
+            case KEY.FF:
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
+                    player.jumpForward(10 * 1000); // 10s skip / param in ms
+                }
+                break;
+            case KEY.RW:
+                if (window.App && (window.App.state === "PLAYER" || window.App.state === "VOD_PLAYER")) {
+                    player.jumpBackward(10 * 1000); // 10s skip / param in ms
+                }
                 break;
             default:
                 // Auto-enter edit mode if typing alphanumeric characters on a highlighted input
@@ -147,25 +182,38 @@ function bindKeys() {
     });
 
     // Ensure the focused element is visible within its scrollable container
+    // Ensure the focused element is visible within its scrollable container
     function ensureVisible($el) {
-        const $container = $el.closest('.list-container');
+        let $container = $el.closest('.list-container');
+        if ($container.length === 0) {
+            // Fallback to scrolling the View itself (e.g. Login)
+            $container = $el.closest('.view');
+        }
         if ($container.length === 0) return;
 
         const container = $container[0];
         const el = $el[0];
 
-        const containerTop = container.scrollTop;
-        const containerBottom = containerTop + container.clientHeight;
-        const elTop = el.offsetTop - container.offsetTop; // Relative to container
-        const elBottom = elTop + el.clientHeight;
+        const elRect = el.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
 
-        // Scroll Down
-        if (elBottom > containerBottom) {
-            container.scrollTop = elBottom - container.clientHeight;
-        }
+        // Calculate relative position
+        // If el is above container top edge: elRect.top < containerRect.top
+        // If el is below container bottom edge: elRect.bottom > containerRect.bottom
+
+        const distTop = elRect.top - containerRect.top;
+        const distBottom = elRect.bottom - containerRect.bottom;
+
+        // Add a small padding/margin for visibility (e.g. 5px)
+        const padding = 5;
+
         // Scroll Up
-        if (elTop < containerTop) {
-            container.scrollTop = elTop;
+        if (distTop < 0) {
+            container.scrollTop += distTop - padding;
+        }
+        // Scroll Down
+        else if (distBottom > 0) {
+            container.scrollTop += distBottom + padding;
         }
     }
 

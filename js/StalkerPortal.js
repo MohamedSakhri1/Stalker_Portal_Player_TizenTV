@@ -21,6 +21,24 @@ class StalkerPortal {
         this.token = "";
         this.random = null;
 
+        // Conditional Headers for Tizen vs Browser
+        const headers = {
+            "Accept-Language": "en-US,en;q=0.5",
+            "Pragma": "no-cache",
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest"
+        };
+
+        // Only set unsafe headers if we are likely on a TV or environment that allows it
+        // (Browsers block these and throw errors)
+        const isTizen = typeof window !== 'undefined' && (window.tizen || navigator.userAgent.includes('Tizen'));
+
+        if (isTizen) {
+            headers["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3";
+            headers["X-User-Agent"] = "Model: MAG250; Link: WiFi";
+            headers["Referer"] = this.portalUrl + "/stalker_portal/c/index.html";
+        }
+
         console.log(`[StalkerPortal] Init Axios: URL=${this.portalUrl}, MAC=${this.mac}`);
 
         // Initialize Axios Client (Still managed here as the "Context")
@@ -28,15 +46,7 @@ class StalkerPortal {
             baseURL: this.portalUrl,
             timeout: 10000,
             // withCredentials: true, // REMOVED: Try without strict CORS cookies first
-            headers: {
-                "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
-                "X-User-Agent": "Model: MAG250; Link: WiFi",
-                "Referer": this.portalUrl + "/stalker_portal/c/index.html",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Pragma": "no-cache",
-                "Accept": "*/*",
-                "X-Requested-With": "XMLHttpRequest"
-            },
+            headers: headers,
             paramsSerializer: (params) => {
                 // Standard Stalker order: type, action, mac, ... others ... token, JsHttpRequest
                 const orderedKeys = ["type", "action", "mac", "stb_lang", "timezone"];
@@ -93,8 +103,7 @@ class StalkerPortal {
                 config.headers["Authorization"] = `Bearer ${this.token}`;
             }
 
-            // Always try to set Cookie header manually (Python style)
-            config.headers["Cookie"] = cookies;
+            // Cookie set moved to conditional block below
 
             if (config.method === 'get' && config.params) {
                 config.params.mac = this.mac;
@@ -104,69 +113,23 @@ class StalkerPortal {
                 // We rely on headers now as requested.
             }
 
-            // Try to set "unsafe" headers (User-Agent, Referer, Cookie)
-            // Browsers will block this and throw "Refused to set unsafe header"
-            // We wrap in try-catch to suppress the error in Chrome, while hoping Tizen accepts it.
-            try {
-                if (typeof document !== 'undefined') {
-                    // In browser, we can't force these usually, but Tizen might allow it.
-                    // If this fails, we just continue.
-                    // Note: We are NO LONGER deleting them, but trying to set them.
-                }
-            } catch (e) { }
+            // Try to set "unsafe" headers only on Tizen/Device
+            const isTizen = typeof window !== 'undefined' && (window.tizen || navigator.userAgent.includes('Tizen'));
 
-            // Note: overriding these in standard axios/browser is hard. 
-            // Logic: The headers object is just a dict. Axios passes it to XHR. 
-            // XHR throws the error when open/send is called if we set them? 
-            // Actually, Axios sets them. 
-            // We can suppress the console error only by NOT setting them if we detect we are in a standard browser 
-            // that forbids it, OR by accepting the error log. 
-            // But the user wants them "resolved". Use a helper?
-
-            // BETTER APPROACH: Only set them if we are NOT in a standard browser check?
-            // Or just ignore the error. The error "Refused to set unsafe header" comes from the browser engine 
-            // at the moment of settingRequestHeader. Axios might not catch it locally in the interceptor.
-
-            // The user asked to "resolve" it.
-            // If we are in valid Tizen environment, it might work.
-            // Let's simply NOT set User-Agent/Referer if specific 'Refused' errors are annoying, 
-            // BUT the user also asked to "forget browser limitations".
-
-            // Actually, the best compromise:
-            // We leave the keys in `config.headers`. 
-            // If the browser complains, it complains.
-            // But we can try to "delete" them if we are in a purely testing Chrome env?
-            // No, user said "forget browser limitations". 
-
-            // Wait, the user said "resolve unsafe header with a working solution".
-            // A working solution for a BROWSER (Chrome) is NOT TO SET THEM.
-            // A working solution for TIZEN is TO SET THEM.
-            // We should check if we are in Tizen.
-
-            const isTizen = typeof tizen !== 'undefined' || navigator.userAgent.includes('Tizen');
-
-            if (!isTizen) {
-                // If not Tizen, relying on browser defaults prevents the error log.
-                delete config.headers["User-Agent"];
-                delete config.headers["Referer"];
-                // Cookie can't be set manually in XHR in browser anyway (it uses document.cookie)
-                // content.js was updated to NOT use token in params, assuming headers work.
-                // BUT headers DON'T work in Chrome.
-                // So for Chrome testing, we are STUCK unless we use token in params.
-
-                // BUT, the user's previous success was with: matches Python (Header) AND NO token in params.
-                // This implies the previous success was a fluke or the server accepted standard browser headers?
-                // No, the user said "categories are still not fetched".
-
-                // Okay, I will try to satisfy "working solution":
-                // If Tizen -> Set Headers.
-                // If Chrome -> Don't Set Headers (avoid error) AND put Token in Params (fallback).
-
-                // However, "forget browser limitations" implies we should try to act like Python.
-                // I will keep the headers, but maybe suppress the specific error? No, can't suppress browser console error.
-
-                // I'll wrap the header assignment in a conditional check that creates them only if they don't exist?
+            if (isTizen) {
+                try {
+                    // We already set UA/Referer in defaults, but cookie is dynamic.
+                    // Cookie header is forbidden in standard browsers but allowed in Tizen WebApp
+                    config.headers["Cookie"] = cookies;
+                } catch (e) { }
+            } else {
+                // In standard browser:
+                // 1. We CANNOT set Cookie header (it uses document.cookie).
+                // 2. We CANNOT set User-Agent/Referer.
+                // We leave them out to avoid "Refused to set unsafe header" errors.
             }
+
+            // console.log(`[Axios] ${config.method.toUpperCase()} ${config.url}`, config.params);
 
             // console.log(`[Axios] ${config.method.toUpperCase()} ${config.url}`, config.params);
             return config;
@@ -234,8 +197,10 @@ class StalkerPortal {
 
     async createLink(type, cmd) {
         // We create an item-like object for the Util
-        const item = { item_type: "channel", cmd: cmd };
-        return await StalkerUtils.getTvStreamLink(this, item);
+        // Map 'itv' -> 'channel', 'vod' -> 'vod'
+        const itemType = (type === "vod") ? "vod" : "channel";
+        const item = { item_type: itemType, cmd: cmd };
+        return await StalkerUtils.getStreamLink(this, item);
     }
 
     getPlaybackHeaders() {

@@ -1,15 +1,18 @@
 <div id="view-login" class="view active">
-    <div>
-        <label>Portal URL:</label>
-        <input type="text" id="portalUrl" class="focusable" value="http://line.trx-ott.com/c">
+    <!-- Tailwind Refactor: Centered Layout -->
+    <div class="flex flex-col items-center justify-center h-full gap-5">
+        <h1 class="mb-5">Stalker Portal Player</h1>
+        <div>
+            <label class="block mb-1">Portal URL:</label>
+            <input type="text" id="portalUrl" class="focusable" value="http://line.trx-ott.com/c">
+        </div>
+        <div>
+            <label class="block mb-1">MAC Address:</label>
+            <input type="text" id="macAddr" class="focusable" value="00:1A:79:F5:63:1F">
+        </div>
+        <div class="mt-5">
+            <button id="btn-connect" onclick="App.connect()" class="focusable bg-blue-700">Connect</button>
+            <button onclick="App.showCombos()" class="focusable">Manage Combos</button>
+        </div>
     </div>
-    <br>
-    <div>
-        <label>MAC Address:</label>
-        <input type="text" id="macAddr" class="focusable" value="00:1A:79:F5:63:1F">
-    </div>
-    <br>
-    <br>
-    <button id="btn-connect" onclick="App.connect()" class="focusable bg-blue-700">Connect</button>
-    <button onclick="App.showCombos()" class="focusable">Manage Combos</button>
 </div>

@@ -1,4 +1,20 @@
 <div id="view-groups" class="view">
-    <h2>Group List</h2>
-    <div id="groups-list" class="list-container"></div>
+    <div class="flex-container">
+        <!-- Sidebar -->
+        <div id="groups-sidebar" class="sidebar">
+            <div id="btn-mode-tv" class="sidebar-btn focusable active-mode" onclick="App.switchMode('TV')">
+                <span class="icon">TV</span>
+            </div>
+            <div id="btn-mode-vod" class="sidebar-btn focusable" onclick="App.switchMode('VOD')">
+                <span class="icon">VOD</span>
+            </div>
+            <!-- Potential Series button in future -->
+        </div>
+
+        <!-- Main Content -->
+        <div class="groups-content">
+            <h2 id="groups-title">TV Groups</h2>
+            <div id="groups-list" class="list-container"></div>
+        </div>
+    </div>
 </div>

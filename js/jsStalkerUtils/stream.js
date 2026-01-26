@@ -14,15 +14,16 @@ export function validateStreamUrl(portal, url) {
     }
 }
 
-export async function getTvStreamLink(portal, item) {
-    if (item.item_type !== "channel") {
-        console.warn(`getTvStreamLink called for non-channel item: ${item.item_type}`);
+export async function getStreamLink(portal, item) {
+    const supportedTypes = ["channel", "vod"];
+    if (!supportedTypes.includes(item.item_type)) {
+        console.warn(`getStreamLink called for unsupported item type: ${item.item_type}`);
         return null;
     }
 
     const cmd = item.cmd;
     if (!cmd) {
-        console.error("IPTV channel must have 'cmd'.");
+        console.error("Item must have 'cmd'.");
         return null;
     }
 
@@ -35,19 +36,22 @@ export async function getTvStreamLink(portal, item) {
     }
 
     const url = portal.activeApiPath || portal.apiUrl;
+    // Determine API type param: 'itv' for channels, 'vod' for movies
+    const apiType = (item.item_type === "vod") ? "vod" : "itv";
+
     const params = {
         action: "create_link",
-        type: "itv",
+        type: apiType,
         cmd: cmd,
         JsHttpRequest: "1-xml"
     };
 
     try {
-        console.debug(`Creating IPTV stream link - GET ${url} params`, params);
+        console.debug(`Creating stream link (${apiType}) - GET ${url} params`, params);
         const response = await portal.client.get(url, { params: params });
 
         const js = (response.data && response.data.js) ? response.data.js : {};
-        console.log("DEBUG: Raw 'js' data from IPTV create_link:", js);
+        console.log(`DEBUG: Raw 'js' data from ${apiType} create_link:`, js);
 
         const urlLink = js.url;
         const cmdValue = js.cmd;
@@ -69,12 +73,12 @@ export async function getTvStreamLink(portal, item) {
                 streamUrl = streamBase + '/' + streamUrl.replace(/^\//, '');
             }
         } else {
-            console.error("Neither 'url' nor 'cmd' found in IPTV stream link response.");
+            console.error("Neither 'url' nor 'cmd' found in stream link response.");
             return null;
         }
 
         if (streamUrl) {
-            console.debug(`Final IPTV stream URL before validation: ${streamUrl}`);
+            console.debug(`Final stream URL before validation: ${streamUrl}`);
 
             // Logic to repair broken token
             let cleanInputCmd = cmd;
@@ -108,7 +112,7 @@ export async function getTvStreamLink(portal, item) {
         }
 
         if (validateStreamUrl(portal, streamUrl)) {
-            console.info(`Successfully created IPTV stream link: ${streamUrl}`);
+            console.info(`Successfully created stream link: ${streamUrl}`);
             return streamUrl;
         } else {
             console.error(`Invalid stream URL generated: ${streamUrl}`);
@@ -120,3 +124,6 @@ export async function getTvStreamLink(portal, item) {
         return null;
     }
 }
+
+// Backward compatibility alias if needed
+export const getTvStreamLink = getStreamLink;

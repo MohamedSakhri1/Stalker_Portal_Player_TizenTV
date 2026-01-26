@@ -5,6 +5,7 @@ import { StalkerUtils } from './jsStalkerUtils/orchestrator.js'; // Direct impor
 const App = {
     state: "LOGIN", // LOGIN, GROUPS, CHANNELS, PLAYER
     stalker: null,
+    fetchController: null,
 
     data: {
         categories: [],
@@ -36,7 +37,7 @@ const App = {
     },
 
     async loadViews() {
-        const views = ['login', 'combos', 'groups', 'channels', 'player'];
+        const views = ['login', 'combos', 'groups', 'channels', 'player', 'vod_groups', 'vod_list', 'vod_player'];
         const root = document.getElementById('app-root');
 
         for (const view of views) {
@@ -71,13 +72,12 @@ const App = {
             console.log("[App] Handshake Success");
 
             await this.stalker.getProfile();
-            console.log("[App] Profile Fetched:", this.stalker.profile); // Inspect this!
+            console.log("[App] Profile Fetched:", this.stalker.profile);
 
             // Fetch Categories (Groups)
-            // Using Utils directly since StalkerPortal.getAllChannels was test-only
+            // Default to TV
+            this.currentMode = "TV";
             this.data.categories = await StalkerUtils.getCategories(this.stalker, "itv");
-
-            this.showGroups();
 
             this.showGroups();
 
@@ -89,8 +89,6 @@ const App = {
                     document.getElementById('expiration-info').textContent = "Expiration: Unlimited";
                 } else {
                     try {
-                        // dateStr is usually YYYY-MM-DD HH:MM:SS
-                        // Replace - with / to ensure cross-browser parsing if needed, though most support ISO-ish
                         const date = new Date(dateStr.replace(/-/g, "/"));
 
                         if (!isNaN(date.getTime())) {
@@ -125,143 +123,146 @@ const App = {
         this.state = "LOGIN";
         player.stop();
 
-        // Focus Connect button initially as requested
         setTimeout(() => {
             const btn = document.getElementById('btn-connect');
             if (btn) {
-                // Remove class from any auto-selected element (like initNavigation's default)
                 document.querySelectorAll('.focused').forEach(el => el.classList.remove('focused'));
-
                 btn.focus();
-                btn.classList.add('focused'); // Sync with navigation.js
+                btn.classList.add('focused');
             }
         }, 100);
     },
 
-    showGroups() {
+    currentMode: "TV", // "TV" or "VOD"
+
+    switchMode(mode) {
+        if (this.currentMode === mode) return;
+        console.log(`[App] Switching Mode to ${mode}`);
+        this.currentMode = mode;
+        this.showGroups();
+    },
+
+    async showGroups() {
+        if (this.currentMode === "TV") {
+            this.showTvGroups();
+        } else {
+            this.showVodGroups();
+        }
+    },
+
+    // --- TV LOGIC ---
+    async showTvGroups() {
         this.switchView('view-groups');
         this.state = "GROUPS";
+        this.updateSidebarUI('tv');
 
+        const container = document.getElementById('groups-list');
+        container.innerHTML = '<div class="list-item">Loading TV Groups...</div>';
+        const titleEl = document.getElementById('groups-title');
+        titleEl.textContent = "TV Groups";
+
+        try {
+            // Always fetch fresh or check cache logic? 
+            // Simplest: fetch fresh
+            this.data.categories = await StalkerUtils.getCategories(this.stalker, "itv");
+        } catch (e) {
+            console.error("Error fetching TV groups:", e);
+            container.innerHTML = '<div class="list-item">Error Loading Groups</div>';
+            return;
+        }
+
+        this.renderTvGroups();
+    },
+
+    renderTvGroups() {
         const container = document.getElementById('groups-list');
         container.innerHTML = "";
 
-        let foundFocus = false;
+        if (!this.data.categories || this.data.categories.length === 0) {
+            container.innerHTML = '<div class="list-item">No Groups Found</div>';
+            return;
+        }
 
-        this.data.categories.forEach((cat, index) => {
+        this.data.categories.forEach((cat) => {
             const el = document.createElement('div');
             el.className = 'list-item focusable';
             el.textContent = cat.name;
-            el.onclick = () => this.selectGroup(cat);
+            el.onclick = () => this.selectTvGroup(cat);
             el.id = `group-${cat.category_id}`;
-
             container.appendChild(el);
 
-            // Restore focus if this was the last selected category
             if (this.data.currentCategory && this.data.currentCategory.category_id === cat.category_id) {
-                setTimeout(() => {
-                    el.focus();
-                    el.classList.add('focused');
-                    el.scrollIntoView({ block: 'center' });
-                }, 100);
-                foundFocus = true;
+                setTimeout(() => { el.focus(); el.classList.add('focused'); el.scrollIntoView({ block: 'center' }); }, 100);
             }
         });
 
-        // Auto focus first item if no prior selection
-        if (!foundFocus && this.data.categories.length > 0) {
+        // Default focus logic similar to before
+        if (!document.querySelector('.focused')) {
             setTimeout(() => {
-                const first = container.firstElementChild;
-                if (first) { first.focus(); first.classList.add('focused'); }
+                const btn = document.getElementById('btn-mode-tv');
+                if (btn) { btn.focus(); btn.classList.add('focused'); }
             }, 100);
         }
     },
 
-    inputLocked: false, // Prevent key bounce/double clicks
-
-    async selectGroup(category) {
+    async selectTvGroup(category) {
         if (this.inputLocked) return;
-        console.log(`[App] Selected Group: ${category.name}`);
+        console.log(`[App] Selected TV Group: ${category.name}`);
+
+        // Abort previous fetch if any
+        if (this.fetchController) {
+            this.fetchController.abort();
+            this.fetchController = null;
+        }
+        this.fetchController = new AbortController();
+        const options = { signal: this.fetchController.signal };
+
         this.data.currentCategory = category;
-
-        // Lock input to prevent immediate selection of first channel (key bounce)
         this.inputLocked = true;
-        setTimeout(() => { this.inputLocked = false; }, 1000); // 1s safety lock
+        setTimeout(() => { this.inputLocked = false; }, 1000);
 
-        // Reset focus state completely when entering a new group
-        this.data.pendingFocusId = null;
-        this.data.currentChannel = null; // Fix: Prevent legacy focus logic from finding old channel
-        sessionStorage.removeItem('lastFocusedChannelId');
-
-        // Reset pending focus from storage
         const lastId = sessionStorage.getItem('lastFocusedChannelId');
         if (lastId) {
             console.log(`[App] Will try to restore focus to channel ID: ${lastId}`);
-            this.data.pendingFocusId = parseInt(lastId, 10);
+            this.data.pendingFocusId = lastId;
         } else {
             this.data.pendingFocusId = null;
         }
 
-        // UX: Show loading?
-        const container = document.getElementById('groups-list');
-        container.innerHTML = '<div class="list-item">Loading...</div>';
+        const onProgress = (newItems) => {
+            if (options.signal.aborted) return;
+            this.data.channels = this.data.channels.concat(newItems);
+            // Re-use generic append but target TV container
+            this.appendChannels(newItems, 'channels-list');
+
+            const loadingEl = document.getElementById('channels-list').querySelector('.loading-item');
+            if (loadingEl) loadingEl.remove();
+        };
+
+        this.data.channels = [];
+        this.showTvList(true);
 
         try {
-            // Reset channels list
-            this.data.channels = [];
-
-            // Define incremental loader
-            const onProgress = (newChannels) => {
-                this.data.channels = this.data.channels.concat(newChannels);
-                this.appendChannels(newChannels);
-
-                // Remove "Loading..." specific item if it exists and we have data
-                const container = document.getElementById('channels-list');
-                const loadingEl = container.querySelector('.loading-item');
-                if (loadingEl) {
-                    loadingEl.remove();
-                }
-            };
-
-            this.showChannels(true); // Show view immediately in loading state
-
-            await StalkerUtils.getChannelsInCategory(this.stalker, category.category_id, onProgress);
-
-            // Final check if empty (and no progress was called or network failed silently)
+            await StalkerUtils.getChannelsInCategory(this.stalker, category.category_id, onProgress, options);
             if (this.data.channels.length === 0) {
-                const container = document.getElementById('channels-list');
-                container.innerHTML = '<div class="list-item">No Channels Found</div>';
-            } else {
-                // If we finished loading and still have a pending focus (item not found), fallback to first
-                if (this.data.pendingFocusId) {
-                    console.warn(`[App] Pending focus channel ${this.data.pendingFocusId} not found in list. Defaulting to first.`);
-                    this.data.pendingFocusId = null;
-                    const container = document.getElementById('channels-list');
-                    if (container.firstElementChild) {
-                        container.firstElementChild.focus();
-                        container.firstElementChild.classList.add('focused');
-                    }
-                }
+                document.getElementById('channels-list').innerHTML = '<div class="list-item">No Channels Found</div>';
             }
-
         } catch (e) {
-            console.error("Failed to load channels", e);
-            // Don't auto-back navigation on error, just alert or show error state in list
-            const container = document.getElementById('channels-list');
-            container.innerHTML = `<div class="list-item">Error loading channels</div>`;
+            if (!options.signal.aborted) {
+                document.getElementById('channels-list').innerHTML = `<div class="list-item">Error loading items</div>`;
+            }
         }
     },
 
-    showChannels(isLoading = false) {
+    showTvList(isLoading = false) {
         this.switchView('view-channels');
         this.state = "CHANNELS";
 
         const container = document.getElementById('channels-list');
-
         if (isLoading) {
-            container.innerHTML = '<div class="list-item loading-item">Loading Channels...</div>';
+            container.innerHTML = '<div class="list-item loading-item">Loading...</div>';
             return;
         }
-
         container.innerHTML = "";
 
         if (this.data.channels.length === 0) {
@@ -269,21 +270,160 @@ const App = {
             return;
         }
 
-        // Initial Render of everything only if not incremental (fallback)
-        // Check storage for focus (e.g. returning from player)
         const lastId = sessionStorage.getItem('lastFocusedChannelId');
-        if (lastId) {
-            this.data.pendingFocusId = parseInt(lastId, 10);
-        }
+        if (lastId) this.data.pendingFocusId = lastId;
 
-        this.appendChannels(this.data.channels);
+        this.appendChannels(this.data.channels, 'channels-list');
     },
 
-    appendChannels(channels) {
-        const container = document.getElementById('channels-list');
-        let indexOffset = container.childElementCount; // Maintain focus logic index
+    // --- VOD LOGIC ---
+    async showVodGroups() {
+        this.switchView('view-vod-groups');
+        this.state = "VOD_GROUPS";
+        this.updateSidebarUI('vod');
 
-        // If it was just loading message, clear it
+        const container = document.getElementById('vod-groups-list');
+        container.innerHTML = '<div class="list-item">Loading Movies Groups...</div>';
+        const titleEl = document.getElementById('vod-groups-title');
+        titleEl.textContent = "Movies Groups";
+
+        try {
+            this.data.categories = await StalkerUtils.getCategories(this.stalker, "vod");
+        } catch (e) {
+            console.error("Error fetching VOD groups:", e);
+            container.innerHTML = '<div class="list-item">Error Loading Groups</div>';
+            return;
+        }
+        this.renderVodGroups();
+    },
+
+    renderVodGroups() {
+        const container = document.getElementById('vod-groups-list');
+        container.innerHTML = "";
+
+        if (!this.data.categories || this.data.categories.length === 0) {
+            container.innerHTML = '<div class="list-item">No Groups Found</div>';
+            return;
+        }
+
+        this.data.categories.forEach((cat) => {
+            const el = document.createElement('div');
+            el.className = 'list-item focusable';
+            el.textContent = cat.name;
+            el.onclick = () => this.selectVodGroup(cat);
+            el.id = `vod-group-${cat.category_id}`;
+            container.appendChild(el);
+
+            if (this.data.currentCategory && this.data.currentCategory.category_id === cat.category_id) {
+                setTimeout(() => { el.focus(); el.classList.add('focused'); el.scrollIntoView({ block: 'center' }); }, 100);
+            }
+        });
+
+        if (!document.querySelector('.focused')) {
+            setTimeout(() => {
+                const btn = document.getElementById('btn-mode-vod-vod'); // ID in vod_groups.html
+                if (btn) { btn.focus(); btn.classList.add('focused'); }
+            }, 100);
+        }
+    },
+
+    async selectVodGroup(category) {
+        if (this.inputLocked) return;
+        console.log(`[App] Selected VOD Group: ${category.name}`);
+
+        // Abort previous
+        if (this.fetchController) {
+            this.fetchController.abort();
+            this.fetchController = null;
+        }
+        this.fetchController = new AbortController();
+        const options = { signal: this.fetchController.signal };
+
+        this.data.currentCategory = category;
+        this.inputLocked = true;
+        setTimeout(() => { this.inputLocked = false; }, 1000);
+
+        const lastId = sessionStorage.getItem('lastFocusedChannelId');
+        if (lastId) {
+            this.data.pendingFocusId = lastId;
+        } else {
+            this.data.pendingFocusId = null;
+        }
+
+        const onProgress = (newItems) => {
+            if (options.signal.aborted) return;
+            this.data.channels = this.data.channels.concat(newItems); // Reuse data.channels for list items
+            this.appendChannels(newItems, 'vod-list'); // Use VOD container
+
+            const loadingEl = document.getElementById('vod-list').querySelector('.loading-item');
+            if (loadingEl) loadingEl.remove();
+        };
+
+        this.data.channels = [];
+        this.showVodList(true);
+
+        try {
+            await StalkerUtils.getVodInCategory(this.stalker, category.category_id, onProgress, options);
+            if (this.data.channels.length === 0) {
+                document.getElementById('vod-list').innerHTML = '<div class="list-item">No Movies Found</div>';
+            }
+        } catch (e) {
+            if (!options.signal.aborted) {
+                document.getElementById('vod-list').innerHTML = `<div class="list-item">Error loading items</div>`;
+            }
+        }
+    },
+
+    showVodList(isLoading = false) {
+        this.switchView('view-vod-list');
+        this.state = "VOD_LIST";
+
+        const container = document.getElementById('vod-list');
+        if (isLoading) {
+            container.innerHTML = '<div class="list-item loading-item">Loading...</div>';
+            return;
+        }
+        container.innerHTML = "";
+
+        if (this.data.channels.length === 0) {
+            container.innerHTML = '<div class="list-item">No Movies Found</div>';
+            return;
+        }
+
+        const lastId = sessionStorage.getItem('lastFocusedChannelId');
+        if (lastId) this.data.pendingFocusId = lastId;
+
+        this.appendChannels(this.data.channels, 'vod-list');
+    },
+
+    // Helper for Sidebar UI
+    updateSidebarUI(activeType) {
+        // TV View Sidebar
+        const tvBtn = document.getElementById('btn-mode-tv');
+        const vodBtn = document.getElementById('btn-mode-vod');
+        if (tvBtn && vodBtn) {
+            tvBtn.classList.remove('active-mode');
+            vodBtn.classList.remove('active-mode');
+            if (activeType === 'tv') tvBtn.classList.add('active-mode');
+            else vodBtn.classList.add('active-mode');
+        }
+
+        // VOD View Sidebar
+        const tvBtn2 = document.getElementById('btn-mode-tv-vod');
+        const vodBtn2 = document.getElementById('btn-mode-vod-vod');
+        if (tvBtn2 && vodBtn2) {
+            tvBtn2.classList.remove('active-mode');
+            vodBtn2.classList.remove('active-mode');
+            if (activeType === 'tv') tvBtn2.classList.add('active-mode');
+            else vodBtn2.classList.add('active-mode');
+        }
+    },
+
+    // Generic Append (Used by both)
+    appendChannels(channels, containerId) {
+        const container = document.getElementById(containerId);
+        let indexOffset = container.childElementCount;
+
         const loadingEl = container.querySelector('.loading-item');
         if (loadingEl) loadingEl.remove();
 
@@ -292,17 +432,20 @@ const App = {
             const el = document.createElement('div');
             el.className = 'list-item focusable';
 
-            if (ch.logo) {
+            if (ch.logo || ch.screenshot_uri) {
                 const img = document.createElement('img');
                 const baseUrl = this.stalker.portalUrl;
-                if (ch.logo.startsWith('http') || ch.logo.startsWith('//')) {
-                    img.src = ch.logo;
-                } else {
-                    img.src = `${baseUrl}/stalker_portal/${ch.logo}`;
+                let logoUrl = ch.logo || ch.screenshot_uri;
+                if (logoUrl) {
+                    if (logoUrl.startsWith('http') || logoUrl.startsWith('//')) {
+                        img.src = logoUrl;
+                    } else {
+                        img.src = `${baseUrl}/stalker_portal/${logoUrl}`;
+                    }
+                    img.className = 'channel-logo';
+                    img.onerror = () => { img.style.display = 'none'; };
+                    el.appendChild(img);
                 }
-                img.className = 'channel-logo';
-                img.onerror = () => { img.style.display = 'none'; };
-                el.appendChild(img);
             }
 
             const span = document.createElement('span');
@@ -311,70 +454,70 @@ const App = {
 
             el.onclick = () => this.selectChannel(ch);
 
-            // Auto-focus only if it's the very first item overall
             if (index === 0) setTimeout(() => el.focus(), 100);
-
             container.appendChild(el);
 
-            // Restore focus check (simplified)
-            if (this.data.currentChannel && this.data.currentChannel.id === ch.id) {
+            const itemId = ch.channel_id || ch.movie_id || ch.id;
+
+            // Check PENDING focus
+            // Normalize to strings for safe comparison
+            if (this.data.pendingFocusId && String(this.data.pendingFocusId) === String(itemId)) {
+                console.log(`[App] Restoring focus to ${ch.name} (${itemId})`);
                 setTimeout(() => {
                     el.focus();
                     el.classList.add('focused');
                     el.scrollIntoView({ block: 'center' });
                 }, 100);
-            }
-            // Check pending focus
-            if (this.data.pendingFocusId && this.data.pendingFocusId === ch.id) {
-                console.log(`[App] Restoring focus to ${ch.name} (${ch.id})`);
-                setTimeout(() => {
-                    el.focus();
-                    el.classList.add('focused');
-                    el.scrollIntoView({ block: 'center' });
-                }, 100);
-                this.data.pendingFocusId = null; // Found it
+                this.data.pendingFocusId = null;
             }
         });
 
-        // If we added items and nothing is focused, try to focus first item
-        // Check if focus is within container, if not, force focus to first element
-        // ONLY if we are NOT waiting for a specific focus item
-        if (this.state === "CHANNELS" && indexOffset <= 3 && container.firstElementChild && !this.data.pendingFocusId) {
-            const active = document.activeElement;
-            const isFocusInContainer = container.contains(active);
+        // Fallback or Forced focus if none found yet
+        if (this.state === "CHANNELS" || this.state === "VOD_LIST") {
+            if (indexOffset <= 3 && container.firstElementChild && !this.data.pendingFocusId) {
+                // Only default focus if we really don't have a pending target or we are at the start
+                // But if pendingFocusId is set, we might be waiting for it to appear (scrolling/loading).
+                // However, appendChannels usually renders what we have.
+                // If we are looking for ID 500 and only loaded 1-10, we shouldn't force focus on 1?
+                // Actually, logic below checks document.activeElement.
+                const active = document.activeElement;
+                const isFocusInContainer = container.contains(active);
 
-            if (!isFocusInContainer) {
-                console.log("Auto-focusing first channel item (forced)...");
-                setTimeout(() => {
-                    // Re-check existence just in case
-                    if (container.firstElementChild) {
-                        container.firstElementChild.focus();
-                        container.firstElementChild.classList.add('focused'); // Visual feedback
-                    }
-                }, 100);
+                if (!isFocusInContainer) {
+                    setTimeout(() => {
+                        // Only force if we are NOT waiting for a specific item, OR if we are sure it's not here?
+                        // For now, keep existing behavior but be careful.
+                        if (container.firstElementChild && !this.data.pendingFocusId) {
+                            container.firstElementChild.focus();
+                            container.firstElementChild.classList.add('focused');
+                        }
+                    }, 100);
+                }
             }
         }
     },
 
-
+    inputLocked: false,
 
     async selectChannel(channel) {
-        if (this.inputLocked) {
-            console.log("[App] Input locked - ignoring selection");
-            return;
-        }
-        console.log(`[App] Selected Channel: ${channel.name}`);
+        if (this.inputLocked) return;
+        console.log(`[App] Selected Item: ${channel.name} (${this.currentMode})`);
         this.data.currentChannel = channel;
 
-        // Save for focus restoration
-        if (channel.id) {
-            sessionStorage.setItem('lastFocusedChannelId', channel.id);
-        }
+        const itemId = channel.channel_id || channel.movie_id || channel.id;
+        if (itemId) sessionStorage.setItem('lastFocusedChannelId', itemId);
 
         try {
-            const link = await this.stalker.createLink("itv", channel.cmd);
+            let link = null;
+            if (this.currentMode === "TV") {
+                link = await this.stalker.createLink("itv", channel.cmd);
+            } else {
+                link = await this.stalker.createLink("vod", channel.cmd);
+            }
+
             if (link) {
-                this.showPlayer(channel, link);
+                if (this.currentMode === "TV") this.showTvPlayer(channel, link);
+                else this.showVodPlayer(channel, link);
             } else {
                 alert("Failed to create link");
             }
@@ -385,50 +528,56 @@ const App = {
 
     nextChannel() {
         if (!this.data.currentChannel || this.data.channels.length === 0) return;
-
-        const currentIndex = this.data.channels.findIndex(ch => ch.id === this.data.currentChannel.id);
+        const currentId = this.data.currentChannel.id || this.data.currentChannel.movie_id || this.data.currentChannel.channel_id;
+        const currentIndex = this.data.channels.findIndex(ch => {
+            const chId = ch.id || ch.movie_id || ch.channel_id;
+            return chId === currentId;
+        });
         let nextIndex = currentIndex + 1;
-
-        // Wrap around
-        if (nextIndex >= this.data.channels.length) {
-            nextIndex = 0;
-        }
-
-        console.log(`[App] Switching to Next Channel (Index: ${nextIndex})`);
+        if (nextIndex >= this.data.channels.length) nextIndex = 0;
         this.selectChannel(this.data.channels[nextIndex]);
     },
 
     prevChannel() {
         if (!this.data.currentChannel || this.data.channels.length === 0) return;
-
-        const currentIndex = this.data.channels.findIndex(ch => ch.id === this.data.currentChannel.id);
+        const currentId = this.data.currentChannel.id || this.data.currentChannel.movie_id || this.data.currentChannel.channel_id;
+        const currentIndex = this.data.channels.findIndex(ch => {
+            const chId = ch.id || ch.movie_id || ch.channel_id;
+            return chId === currentId;
+        });
         let prevIndex = currentIndex - 1;
-
-        // Wrap around
-        if (prevIndex < 0) {
-            prevIndex = this.data.channels.length - 1;
-        }
-
-        console.log(`[App] Switching to Prev Channel (Index: ${prevIndex})`);
+        if (prevIndex < 0) prevIndex = this.data.channels.length - 1;
         this.selectChannel(this.data.channels[prevIndex]);
     },
 
-    showPlayer(channel, url) {
+    // --- PLAYERS ---
+
+    showTvPlayer(channel, url) {
         this.switchView('view-player');
         this.state = "PLAYER";
+        this.configurePlayer(channel, url, 'player-title', 'player-logo', 'player-overlay', 'buffering-overlay', 'main-title', 'main-author');
+    },
 
-        document.getElementById('player-title').textContent = channel.name;
+    showVodPlayer(channel, url) {
+        this.switchView('view-vod-player');
+        this.state = "VOD_PLAYER";
+        // Note: VOD Player HTML IDs are different
+        this.configurePlayer(channel, url, 'vod-player-title', 'vod-player-logo', 'vod-player-overlay', 'vod-buffering-overlay', 'main-title', 'main-author', true);
+    },
 
-        const logoEl = document.getElementById('player-logo');
+    configurePlayer(channel, url, titleId, logoId, overlayId, bufferId, hideTitleId, hideAuthorId, isVod = false) {
+        document.getElementById(titleId).textContent = channel.name;
+
+        const logoEl = document.getElementById(logoId);
         if (logoEl) {
-            if (channel.logo) {
+            const logoUrl = channel.logo || channel.screenshot_uri;
+            if (logoUrl) {
                 const baseUrl = this.stalker.portalUrl;
-                if (channel.logo.startsWith('http') || channel.logo.startsWith('//')) {
-                    logoEl.src = channel.logo;
+                if (logoUrl.startsWith('http') || logoUrl.startsWith('//')) {
+                    logoEl.src = logoUrl;
                 } else {
-                    logoEl.src = `${baseUrl}/stalker_portal/${channel.logo}`;
+                    logoEl.src = `${baseUrl}/stalker_portal/${logoUrl}`;
                 }
-                // Tailwind: remove 'hidden' class, ensure display style is cleared
                 logoEl.classList.remove('hidden');
                 logoEl.style.display = '';
             } else {
@@ -437,62 +586,59 @@ const App = {
             }
         }
 
-        // Tizen Requirement: Make background transparent to see video plane
         document.body.classList.add('transparent-bg');
-        document.getElementById('view-player').classList.add('transparent-bg');
+        // Target correct view for transparent bg
+        document.getElementById(isVod ? 'view-vod-player' : 'view-player').classList.add('transparent-bg');
 
-        // Hide Logs and Title during playback
         document.getElementById('logBox').style.display = 'none';
-        document.getElementById('main-title').style.display = 'none';
+        document.getElementById(hideTitleId).style.display = 'none';
+        if (hideAuthorId) {
+            const auth = document.getElementById(hideAuthorId);
+            if (auth) auth.style.display = 'none';
+        }
 
-        // Show overlay initially, then hide after 3 seconds for clean view
-        const overlay = document.getElementById('player-overlay');
-
-        // Reset overlay state
+        const overlay = document.getElementById(overlayId);
         overlay.style.opacity = '1';
-        overlay.style.transition = 'opacity 0.2s';
 
         if (this.overlayTimer) clearTimeout(this.overlayTimer);
         this.overlayTimer = setTimeout(() => {
-            overlay.style.transition = 'opacity 1s';
             overlay.style.opacity = '0';
         }, 4000);
 
-        const headers = this.stalker.getPlaybackHeaders();
-        const bufferingEl = document.getElementById('buffering-overlay');
+        const bufferingEl = document.getElementById(bufferId);
 
-        // Define play options
         const playOptions = {
-            // Headers disabled to match Python VLC behavior (URL contains token)
-            // headers: headers, 
-            autoRestart: false, // We handle restart manually to refresh tokens
-            onBufferingStart: () => {
-                bufferingEl.style.display = 'block';
-                bufferingEl.textContent = "Buffering...";
-            },
-            onBufferingProgress: (percent) => {
-                bufferingEl.textContent = `Buffering ${percent}%`;
-            },
-            onBufferingComplete: () => {
-                bufferingEl.style.display = 'none';
-            },
+            autoRestart: false,
+            onBufferingStart: () => { bufferingEl.style.display = 'block'; bufferingEl.textContent = "Buffering..."; },
+            onBufferingProgress: (percent) => { bufferingEl.textContent = `Buffering ${percent}%`; },
+            onBufferingComplete: () => { bufferingEl.style.display = 'none'; },
             onStreamCompleted: () => {
-                console.log("[App] Stream ended. Validating and restarting...");
-                this.restartStream(channel);
+                if (!isVod) this.restartStream(channel); // TV: Restart
+                else this.handleBack(); // VOD: Exit
             },
             onError: (e) => {
-                console.error("[App] Playback Failed:", e);
-                // alert("Playback Failed: Stream is unplayable."); // Disabled per user request
-                this.player.stop(); // Ensure player is stopped
-                this.switchView('view-channels');
-                this.state = "CHANNELS";
+                console.error("Playback Error", e);
+                this.player.stop();
 
-                // Restore layout visibility
+                // Fallback exit
+                if (isVod) {
+                    this.switchView('view-vod-list');
+                    this.state = "VOD_LIST";
+                    document.getElementById('view-vod-player').classList.remove('transparent-bg');
+                } else {
+                    this.switchView('view-channels');
+                    this.state = "CHANNELS";
+                    document.getElementById('view-player').classList.remove('transparent-bg');
+                }
+
                 document.body.classList.remove('transparent-bg');
-                document.getElementById('view-player').classList.remove('transparent-bg');
                 document.getElementById('logBox').style.display = 'block';
-                document.getElementById('main-title').style.display = 'block';
-                document.getElementById('buffering-overlay').style.display = 'none';
+                document.getElementById(hideTitleId).style.display = 'block';
+                if (hideAuthorId) {
+                    const auth = document.getElementById(hideAuthorId);
+                    if (auth) auth.style.display = 'block';
+                }
+                if (bufferingEl) bufferingEl.style.display = 'none';
             }
         };
 
@@ -506,50 +652,77 @@ const App = {
         console.log("[App] Refreshing stream link...");
         try {
             // Fetch a fresh link (generates new token)
-            const newLink = await this.stalker.createLink("itv", channel.cmd);
+            // Fix: Use correct type
+            const type = (this.currentMode === "TV") ? "itv" : "vod";
+            const newLink = await this.stalker.createLink(type, channel.cmd);
             if (newLink) {
                 console.log("[App] Restarting with new link:", newLink);
-                this.showPlayer(channel, newLink);
+                // Re-use the player configuration logic
+                if (this.currentMode === "TV") this.showTvPlayer(channel, newLink);
+                else this.showVodPlayer(channel, newLink);
             } else {
                 console.error("[App] Failed to refresh link on restart.");
                 // Maybe go back to channels?
-                this.showChannels();
+                this.showTvList(); // Assuming TV mode for restart
             }
         } catch (e) {
             console.error("[App] Error restarting stream:", e);
-            this.showChannels();
+            this.showTvList(); // Assuming TV mode for restart
         }
     },
 
     handleBack() {
         console.log("[App] Back Pressed. Current State:", this.state);
+
+        // Abort fetch if pending
+        if (this.fetchController) {
+            this.fetchController.abort();
+            this.fetchController = null;
+        }
+
+        // Common cleanup when exiting any player
+        if (this.state === "PLAYER" || this.state === "VOD_PLAYER") {
+            if (this.overlayTimer) clearTimeout(this.overlayTimer);
+            player.stop();
+            document.body.classList.remove('transparent-bg');
+            document.getElementById('logBox').style.display = 'block';
+            document.getElementById('main-title').style.display = 'block';
+            const auth = document.getElementById('main-author');
+            if (auth) auth.style.display = 'block';
+        }
+
         switch (this.state) {
             case "PLAYER":
-                if (this.overlayTimer) clearTimeout(this.overlayTimer);
-                player.stop();
-                // Restore background and logs
-                document.body.classList.remove('transparent-bg');
                 document.getElementById('view-player').classList.remove('transparent-bg');
-                document.getElementById('logBox').style.display = 'block';
-                document.getElementById('main-title').style.display = 'block';
-
-                // Reset overlay for next time
                 document.getElementById('player-overlay').style.opacity = '1';
-
-                this.showChannels();
+                this.showTvList(); // Return to TV List
+                break;
+            case "VOD_PLAYER":
+                document.getElementById('view-vod-player').classList.remove('transparent-bg');
+                document.getElementById('vod-player-overlay').style.opacity = '1';
+                this.showVodList(); // Return to VOD List
                 break;
             case "CHANNELS":
-                sessionStorage.removeItem('lastFocusedChannelId'); // Clear saved focus
-                this.showGroups();
+                sessionStorage.removeItem('lastFocusedChannelId');
+                this.showTvGroups();
                 break;
-            case "GROUPS":
+            case "VOD_LIST":
+                sessionStorage.removeItem('lastFocusedChannelId');
+                this.showVodGroups();
+                break;
+            case "GROUPS": // TV Groups
+                this.showLogin();
+                break;
+            case "VOD_GROUPS": // VOD Groups
+                // If sidebar switches mode, fine. But Back key should go to Login? 
+                // Or we could argue user might want to switch back to TV mode. 
+                // But consistent navigation says "Up one level". Parent of Groups is Login.
                 this.showLogin();
                 break;
             case "COMBOS":
                 this.showLogin();
                 break;
             case "LOGIN":
-                // Exit app?
                 console.log("Exit requested");
                 if (window.tizen) {
                     try { tizen.application.getCurrentApplication().exit(); } catch (e) { }
@@ -561,7 +734,6 @@ const App = {
     switchView(viewId) {
         document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
         document.getElementById(viewId).classList.add('active');
-        // Reset focus? Focus logic handles it inside showX methods
     },
 
     // --- COMBO MANAGEMENT ---
